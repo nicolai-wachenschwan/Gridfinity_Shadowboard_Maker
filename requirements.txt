@@ -1,12 +1,11 @@
-streamlit>=1.20
+streamlit
 opencv-python
 numpy
 Pillow
-rembg>=2.0.0   # optional; Community Cloud: prüfen ob erlaubt
+rembg
 onnxruntime
 trimesh
 scikit-image
 streamlit-drawable-canvas
 scipy
 stpyvista
-io
