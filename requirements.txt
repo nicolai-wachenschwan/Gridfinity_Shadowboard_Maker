@@ -9,4 +9,6 @@ scikit-image
 streamlit-drawable-canvas
 scipy
 stpyvista
+vtk
 manifold3d
+
