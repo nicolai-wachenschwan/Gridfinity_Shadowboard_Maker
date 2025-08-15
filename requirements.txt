@@ -1,0 +1,12 @@
+streamlit>=1.20
+opencv-python
+numpy
+Pillow
+rembg>=2.0.0   # optional; Community Cloud: prüfen ob erlaubt
+onnxruntime
+trimesh
+scikit-image
+streamlit-drawable-canvas
+scipy
+stpyvista
+io
