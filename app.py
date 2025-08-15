@@ -36,16 +36,16 @@ def _image_to_data_url(img, fmt="PNG", allow_tempfile_for_large=True, max_inline
             raise ValueError("Image zu groß für inline data url und allow_tempfile_for_large=False")
 
 
-try:
-    from streamlit.elements.image import image_to_url
-except Exception:
-    from streamlit.elements.lib.image_utils import image_to_url
+#try:
+#    from streamlit.elements.image import image_to_url
+#except Exception:
+#    from streamlit.elements.lib.image_utils import image_to_url
         
-import streamlit.elements.image as st_image_mod
-if st_image_mod is not None and not hasattr(st_image_mod, "image_to_url"):
-    st_image_mod.image_to_url = image_to_url
-    st_image_mod.image_to_url.__doc__ = "Patched image_to_url for compatibility"
-    print("Patched streamlit.elements.image.image_to_url with custom implementation.")
+#import streamlit.elements.image as st_image_mod
+#if st_image_mod is not None and not hasattr(st_image_mod, "image_to_url"):
+#    st_image_mod.image_to_url = image_to_url
+#    st_image_mod.image_to_url.__doc__ = "Patched image_to_url for compatibility"
+#    print("Patched streamlit.elements.image.image_to_url with custom implementation.")
 
 from stpyvista.utils import start_xvfb
 start_xvfb()
@@ -401,5 +401,6 @@ if __name__ == "__main__":
     app_state_manager = AppState()
     app_ui = AppUI(app_state_manager)
     app_ui.run()
+
 
 
