@@ -1,4 +1,4 @@
-streamlit
+streamlit<=1.40
 opencv-python
 numpy
 Pillow
@@ -12,6 +12,7 @@ stpyvista
 pyvista<0.45.0
 vtk
 manifold3d
+
 
 
 
