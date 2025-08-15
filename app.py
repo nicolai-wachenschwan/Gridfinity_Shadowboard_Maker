@@ -47,7 +47,12 @@ if st_image_mod is not None and not hasattr(st_image_mod, "image_to_url"):
     st_image_mod.image_to_url.__doc__ = "Patched image_to_url for compatibility"
     print("Patched streamlit.elements.image.image_to_url with custom implementation.")
 
-# app.py (überarbeitet)
+from stpyvista.utils import start_xvfb
+
+if "IS_XVFB_RUNNING" not in st.session_state:
+  start_xvfb()
+  st.session_state.IS_XVFB_RUNNING = True 
+    
 import io
 import copy
 import traceback
@@ -399,3 +404,4 @@ if __name__ == "__main__":
     app_state_manager = AppState()
     app_ui = AppUI(app_state_manager)
     app_ui.run()
+
