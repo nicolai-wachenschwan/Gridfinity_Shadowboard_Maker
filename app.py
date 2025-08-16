@@ -65,6 +65,7 @@ import pyvista as pv
 import preprocess_image as pre
 import make_mesh as mesh
 
+st.set_page_config(layout="wide", page_title="Shadowboard Generator")
 
 try:
     from streamlit_drawable_canvas import st_canvas
@@ -167,7 +168,6 @@ class AppState:
 class AppUI:
     def __init__(self, state_manager: AppState):
         self.state_manager = state_manager
-        st.set_page_config(layout="wide", page_title="Shadowboard Generator")
         st.title("🖼️ Custom Shadowboard Generator — mit Boolean-Operation")
 
     def run(self):
