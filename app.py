@@ -19,11 +19,7 @@ import make_mesh as mesh
 
 st.set_page_config(layout="wide", page_title="Shadowboard Generator")
 
-try:
-    from streamlit_drawable_canvas import st_canvas
-except Exception as e:
-    st.warning("Das Paket 'streamlit-drawable-canvas' scheint nicht installiert zu sein. Die Canvas-Funktionen werden dann nicht funktionieren.")
-    st_canvas = None
+from streamlit_drawable_canvas import st_canvas
 
 # ---------- Konstanten / Defaults ----------
 MAX_DISPLAY_WIDTH_PX = 1100
