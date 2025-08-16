@@ -262,13 +262,16 @@ class AppUI:
         st.subheader("Werkzeuge")
         current_angle = float(state.get("rotation_angle", 0.0))
 
-        col_angle, col_stroke = st.columns(2)
+        col_angle, col_stroke, col_color = st.columns(3)
         with col_angle:
             slider_angle = st.slider("Bild drehen (°)", -180.0, 180.0, current_angle, 0.5)
             precise_angle = st.number_input("Genauer Winkel (°)", value=current_angle, step=0.1, format="%.2f")
         with col_stroke:
             stroke_width_mm = st.number_input("Strichstärke (mm)", min_value=0.1, max_value=50.0, value=5.0, step=0.1)
-            stroke_color = st.color_picker("Strichfarbe", "#000000")
+        with col_color:
+            g = st.slider("Grauwert (0=schwarz)", min_value=0, max_value=255, value=st.session_state.params.get("circle_grayscale_value", 0))
+            stroke_color = f"rgb({g}, {g}, {g})"
+
 
         if precise_angle != current_angle: new_angle = precise_angle
         else: new_angle = slider_angle
