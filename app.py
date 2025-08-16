@@ -40,7 +40,7 @@ def _image_to_data_url(img, fmt="PNG", allow_tempfile_for_large=True, max_inline
 #    from streamlit.elements.image import image_to_url
 #except Exception:
 #    from streamlit.elements.lib.image_utils import image_to_url
-        
+
 #import streamlit.elements.image as st_image_mod
 #if st_image_mod is not None and not hasattr(st_image_mod, "image_to_url"):
 #    st_image_mod.image_to_url = image_to_url
@@ -49,7 +49,7 @@ def _image_to_data_url(img, fmt="PNG", allow_tempfile_for_large=True, max_inline
 
 from stpyvista.utils import start_xvfb
 start_xvfb()
-    
+
 import io
 import copy
 import traceback
@@ -248,7 +248,7 @@ class AppUI:
                         self.state_manager.update_state({"stage": "align", "canvas_background": canvas_bg_np, "rotation_angle": 0.0}); st.rerun()
 
     def render_align_stage(self):
-        st.header("Schritt 2: Bild ausrichten & Halterungen hinzufügen")
+        st.header("Schritt 2: Bild ausrichten & Konturen zeichnen")
         if st_canvas is None:
             st.error("streamlit_drawable_canvas fehlt — bitte installieren."); return
 
@@ -261,12 +261,14 @@ class AppUI:
 
         st.subheader("Werkzeuge")
         current_angle = float(state.get("rotation_angle", 0.0))
-        slider_angle = st.slider("Bild drehen (°)", -180.0, 180.0, current_angle, 0.5)
-        
-        col_prec, col_diam, col_color = st.columns(3)
-        with col_prec: precise_angle = st.number_input("Genauer Winkel (°)", value=current_angle, step=0.1, format="%.2f")
-        with col_diam: st.session_state.params["circle_diameter_mm"] = st.number_input("Ø Halterungen (mm)", min_value=1, max_value=200, value=st.session_state.params.get("circle_diameter_mm", 10))
-        with col_color: st.session_state.params["circle_grayscale_value"] = st.slider("Grauwert (0=schwarz)", min_value=0, max_value=255, value=st.session_state.params.get("circle_grayscale_value", 0))
+
+        col_angle, col_stroke = st.columns(2)
+        with col_angle:
+            slider_angle = st.slider("Bild drehen (°)", -180.0, 180.0, current_angle, 0.5)
+            precise_angle = st.number_input("Genauer Winkel (°)", value=current_angle, step=0.1, format="%.2f")
+        with col_stroke:
+            stroke_width_mm = st.number_input("Strichstärke (mm)", min_value=0.1, max_value=50.0, value=5.0, step=0.1)
+            stroke_color = st.color_picker("Strichfarbe", "#000000")
 
         if precise_angle != current_angle: new_angle = precise_angle
         else: new_angle = slider_angle
@@ -286,33 +288,46 @@ class AppUI:
         if show_grid: canvas_for_canvas = draw_grid_on_image(rotated_img, rows=5, cols=5, line_alpha=120)
 
         st.markdown(f"**Interaktiver Canvas (Auflösung: {w} × {h}px)**")
-        radius_px = int(0.5 * st.session_state.params["circle_diameter_mm"] * (st.session_state.params["dpi"] / 25.4))
-        g = st.session_state.params["circle_grayscale_value"]
-        fill_color_rgba = f"rgba({g}, {g}, {g}, 1.0)"
+
+        # Konvertiere Strichstärke von mm in px
+        dpi = st.session_state.params.get("dpi", 100)
+        stroke_width_px = int(stroke_width_mm * (dpi / 25.4))
+        st.info(f"Strichstärke: {stroke_width_mm} mm entspricht {stroke_width_px} px bei {dpi} DPI.")
 
         pil_bg_for_canvas = pil_from_bytes_or_array(canvas_for_canvas)
-        canvas_result = st_canvas(drawing_mode="point", point_display_radius=radius_px, fill_color=fill_color_rgba,
-                                  stroke_width=0, background_image=pil_bg_for_canvas, update_streamlit=True,
-                                  height=h, width=w, key="align_canvas_native")
+        canvas_result = st_canvas(
+            drawing_mode="freedraw",
+            stroke_width=stroke_width_px,
+            stroke_color=stroke_color,
+            background_image=pil_bg_for_canvas,
+            update_streamlit=True,
+            height=h,
+            width=w,
+            key="align_canvas_native"
+        )
 
         if st.button("✅ Ausrichtung bestätigen & weiter zur 3D-Erstellung"):
-            with st.spinner("Kombiniere Bild und Halterungen..."):
-                drawing_layer_rgba = canvas_result.image_data
+            with st.spinner("Kombiniere Bild und Zeichnung..."):
                 background_gray = rotated_img.copy()
 
-                if drawing_layer_rgba is not None:
-                    background_rgb = cv2.cvtColor(background_gray, cv2.COLOR_GRAY2RGB)
-                    alpha = drawing_layer_rgba[:, :, 3] / 255.0
-                    alpha_mask = np.stack([alpha, alpha, alpha], axis=-1)
-                    drawing_layer_rgb = drawing_layer_rgba[:, :, :3]
-                    composite_rgb = (drawing_layer_rgb * alpha_mask + background_rgb * (1.0 - alpha_mask)).astype(np.uint8)
-                    final_image = cv2.cvtColor(composite_rgb, cv2.COLOR_RGB2GRAY)
-                else:
-                    st.warning("Keine Canvas-Daten empfangen. Fahre mit dem unmodifizierten Bild fort.")
-                    final_image = background_gray
+                # Erstelle ein leeres Bild für die Zeichnung
+                drawing_mask = np.full_like(background_gray, 255) # Start with a white mask
 
-                print("Finales Bild mit Halterungen:", final_image.shape)
-                cv2.imwrite("final_image_with_circles.jpg", final_image)
+                if canvas_result.json_data is not None:
+                    objects = canvas_result.json_data.get("objects", [])
+                    for obj in objects:
+                        if obj['type'] == 'path':
+                            path = [np.array(p[1:3]).astype(np.int32) for p in obj['path']]
+                            cv2.polylines(drawing_mask, [np.array(path)], isClosed=False, color=(0,0,0), thickness=stroke_width_px)
+
+                # Combine the drawing (black lines) with the background image (white/gray)
+                # Where the mask is black (0), the final image should be black.
+                # Where the mask is white (255), the final image should have the value of the background.
+                final_image = np.minimum(background_gray, drawing_mask)
+
+
+                print("Finales Bild mit Zeichnung:", final_image.shape)
+                cv2.imwrite("final_image_with_drawing.jpg", final_image)
                 self.state_manager.update_state({"stage": "3d", "aligned_image": rotated_img, "final_image_with_circles": final_image}); st.rerun()
 
     def render_3d_stage(self):
@@ -322,7 +337,7 @@ class AppUI:
             st.warning("Bitte zuerst die Ausrichtung in Schritt 2 bestätigen.")
             if st.button("Zurück zu Schritt 2"): self.state_manager.update_state({"stage": "align"}); st.rerun()
             return
-        
+
         st.info("Optional: Laden Sie ein Basis-Mesh hoch (z.B. Gridfinity-Boden), mit dem Ihr Shadowboard verschnitten werden soll.")
         st.file_uploader("Basis-Mesh hochladen (.stl, .obj)", type=['stl', 'obj'], key="base_mesh_uploader")
 
@@ -330,13 +345,13 @@ class AppUI:
         col1, col2 = st.columns(2)
         with col1: st.session_state.params["max_depth_mm"] = st.number_input("Max. Tiefe der Vertiefung (mm)", min_value=1.0, value=st.session_state.params.get("max_depth_mm", 15.0))
         with col2: st.session_state.params["floor_thickness_mm"] = st.number_input("Bodenstärke (mm)", min_value=1.0, value=st.session_state.params.get("floor_thickness_mm", 2.0))
-        
+
         st.subheader("Parameter für Boolean-Operation")
         col3, col4 = st.columns(2)
         with col3: st.session_state.params["offset_x_mm"] = st.number_input("Offset X (mm)", value=st.session_state.params.get("offset_x_mm", 0.0), format="%.2f")
         with col4: st.session_state.params["offset_y_mm"] = st.number_input("Offset Y (mm)", value=st.session_state.params.get("offset_y_mm", 0.0), format="%.2f")
         st.session_state.params["base_tolerance_mm"] = st.number_input("Toleranz zu Basis (mm)", min_value=0.0, value=st.session_state.params.get("base_tolerance_mm", 0.3), format="%.2f")
-        
+
         st.divider()
 
         if st.button("🚀 3D-Modell generieren / verrechnen!", type="primary", use_container_width=True):
@@ -346,9 +361,9 @@ class AppUI:
                     container_mesh = mesh.erstelle_finalen_einsatz(
                         tiefenbild=state["final_image_with_circles"], dpi=st.session_state.params["dpi"],
                         max_tiefe_mm=st.session_state.params["max_depth_mm"], bodenstaerke_mm=st.session_state.params["floor_thickness_mm"])
-                    
+
                     generated_mesh = container_mesh
-                    
+
                     # Schritt 2: Prüfen, ob ein Basis-Mesh für die Boolean-Operation hochgeladen wurde
                     uploaded_base_mesh_file = st.session_state.get("base_mesh_uploader")
                     if uploaded_base_mesh_file is not None:
@@ -401,6 +416,3 @@ if __name__ == "__main__":
     app_state_manager = AppState()
     app_ui = AppUI(app_state_manager)
     app_ui.run()
-
-
-
