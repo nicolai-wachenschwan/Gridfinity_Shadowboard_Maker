@@ -1,51 +1,3 @@
-# --- Monkeypatch für fehlende streamlit.elements.image.image_to_url ---
-# (Dieser Abschnitt bleibt unverändert)
-import io
-import base64
-from PIL import Image
-import numpy as np
-import tempfile
-import warnings
-
-
-def _image_to_data_url(img, fmt="PNG", allow_tempfile_for_large=True, max_inline_bytes=3_000_000):
-    if isinstance(img, np.ndarray):
-        img = Image.fromarray(img)
-    if isinstance(img, Image.Image):
-        bio = io.BytesIO()
-        img.save(bio, format=fmt)
-        data = bio.getvalue()
-    elif isinstance(img, (bytes, bytearray)):
-        data = bytes(img)
-    else:
-        raise TypeError("image_to_url patch erwartet PIL Image, numpy.ndarray oder bytes")
-
-    if len(data) <= max_inline_bytes:
-        enc = base64.b64encode(data).decode("ascii")
-        return f"data:image/{fmt.lower()};base64,{enc}"
-    else:
-        if allow_tempfile_for_large:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=f".{fmt.lower()}")
-            tmp.write(data)
-            tmp.flush()
-            tmp.close()
-            warnings.warn("Bild zu groß für inline data-url -> liefere tempfile path (file://). "
-                          "Das kann je nach Umgebung evtl. nicht von streamlit gehostet werden.")
-            return f"file://{tmp.name}"
-        else:
-            raise ValueError("Image zu groß für inline data url und allow_tempfile_for_large=False")
-
-
-#try:
-#    from streamlit.elements.image import image_to_url
-#except Exception:
-#    from streamlit.elements.lib.image_utils import image_to_url
-
-#import streamlit.elements.image as st_image_mod
-#if st_image_mod is not None and not hasattr(st_image_mod, "image_to_url"):
-#    st_image_mod.image_to_url = image_to_url
-#    st_image_mod.image_to_url.__doc__ = "Patched image_to_url for compatibility"
-#    print("Patched streamlit.elements.image.image_to_url with custom implementation.")
 
 from stpyvista.utils import start_xvfb
 start_xvfb()
@@ -68,7 +20,7 @@ import make_mesh as mesh
 st.set_page_config(layout="wide", page_title="Shadowboard Generator")
 
 try:
-    from streamlit_drawable_canvas import st_canvas
+    from streamlit-drawable-canvas import st_canvas
 except Exception as e:
     st.warning("Das Paket 'streamlit-drawable-canvas' scheint nicht installiert zu sein. Die Canvas-Funktionen werden dann nicht funktionieren.")
     st_canvas = None
