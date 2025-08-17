@@ -309,7 +309,32 @@ class AppUI:
             return
 
         st.info("Optional: Laden Sie ein Basis-Mesh hoch (z.B. Gridfinity-Boden), mit dem Ihr Shadowboard verschnitten werden soll.")
-        st.file_uploader("Basis-Mesh hochladen (.stl, .obj)", type=['stl', 'obj'], key="base_mesh_uploader")
+        base_mesh_file = st.file_uploader("Basis-Mesh hochladen (.stl, .obj)", type=['stl', 'obj'], key="base_mesh_uploader")
+
+        # Sofortige Validierung des hochgeladenen Base-Mesh
+        if base_mesh_file is not None:
+            # Prüfen, ob diese Datei bereits validiert wurde, um wiederholte Verarbeitung zu vermeiden
+            if "validated_mesh_name" not in st.session_state or st.session_state.validated_mesh_name != base_mesh_file.name:
+                with st.spinner(f"Prüfe Mesh '{base_mesh_file.name}'..."):
+                    try:
+                        base_mesh_file.seek(0)
+                        mesh_obj = trimesh.load(base_mesh_file, file_type=base_mesh_file.name.split('.')[-1])
+                        st.session_state.uploaded_base_mesh_object = mesh_obj
+                        st.session_state.validated_mesh_name = base_mesh_file.name
+                        st.session_state.base_mesh_is_watertight = mesh_obj.is_watertight
+                    except Exception as e:
+                        st.error(f"Fehler beim Laden oder Validieren des Base-Mesh: {e}")
+                        # Alte, möglicherweise ungültige Daten löschen
+                        if "uploaded_base_mesh_object" in st.session_state: del st.session_state.uploaded_base_mesh_object
+                        if "validated_mesh_name" in st.session_state: del st.session_state.validated_mesh_name
+                        if "base_mesh_is_watertight" in st.session_state: del st.session_state.base_mesh_is_watertight
+
+            # Status basierend auf der Validierung anzeigen
+            if "base_mesh_is_watertight" in st.session_state:
+                if st.session_state.base_mesh_is_watertight:
+                    st.success(f"✅ Mesh '{base_mesh_file.name}' ist wasserdicht (watertight) und bereit zur Verwendung.")
+                else:
+                    st.warning(f"⚠️ Mesh '{base_mesh_file.name}' ist nicht wasserdicht. Dies kann zu Problemen führen. Bei der Generierung wird eine automatische Reparatur versucht.")
 
         st.subheader("3D Parameter")
         col1, col2 = st.columns(2)
@@ -337,21 +362,51 @@ class AppUI:
                     # Schritt 2: Prüfen, ob ein Basis-Mesh für die Boolean-Operation hochgeladen wurde
                     uploaded_base_mesh_file = st.session_state.get("base_mesh_uploader")
                     if uploaded_base_mesh_file is not None:
-                        st.info("Basis-Mesh wurde hochgeladen. Führe Boolean-Operation durch...")
-                        # Basis-Mesh aus der hochgeladenen Datei laden
-                        # Wichtig: file-like object direkt an trimesh übergeben
-                        uploaded_base_mesh_file.seek(0)
-                        base_mesh = trimesh.load(uploaded_base_mesh_file, file_type=uploaded_base_mesh_file.name.split('.')[-1])
+                        base_mesh_to_use = None
+                        # Versuche, das vorab validierte Mesh aus dem Session State zu verwenden
+                        if "uploaded_base_mesh_object" in st.session_state and st.session_state.get("validated_mesh_name") == uploaded_base_mesh_file.name:
+                            base_mesh_to_use = st.session_state.uploaded_base_mesh_object
 
-                        # Die Verarbeitung mit dem neuen Modul durchführen
-                        final_mesh = mesh.perform_boolean_subtraction(
-                            container_mesh=container_mesh,
-                            base_mesh=base_mesh,
-                            offset_x_mm=st.session_state.params["offset_x_mm"],
-                            offset_y_mm=st.session_state.params["offset_y_mm"],
-                            tolerance_mm=st.session_state.params["base_tolerance_mm"]
-                        )
-                        generated_mesh = final_mesh
+                            # Wenn nicht wasserdicht, reparieren
+                            if not st.session_state.get("base_mesh_is_watertight", True):
+                                st.info("Versuche, das nicht-wasserdichte Basis-Mesh zu reparieren...")
+                                trimesh.repair.fill_holes(base_mesh_to_use)
+                                base_mesh_to_use.remove_unreferenced_vertices()
+                                if not base_mesh_to_use.is_watertight:
+                                    st.error("Die automatische Reparatur des Basis-Mesh ist fehlgeschlagen. Die Boolean-Operation wird übersprungen.")
+                                    base_mesh_to_use = None  # Verhindert die Operation
+                                else:
+                                    st.success("Basis-Mesh erfolgreich repariert.")
+                        else:
+                            # Fallback: Lade das Mesh, wenn es nicht im State ist (sollte nicht passieren)
+                            st.warning("Konnte vorab validiertes Mesh nicht finden. Lade es erneut.")
+                            try:
+                                uploaded_base_mesh_file.seek(0)
+                                base_mesh_to_use = trimesh.load(uploaded_base_mesh_file, file_type=uploaded_base_mesh_file.name.split('.')[-1])
+                                if not base_mesh_to_use.is_watertight:
+                                     st.warning("Das Mesh ist nicht wasserdicht. Reparatur wird versucht.")
+                                     trimesh.repair.fill_holes(base_mesh_to_use)
+                                     base_mesh_to_use.remove_unreferenced_vertices()
+                                     if not base_mesh_to_use.is_watertight:
+                                         st.error("Reparatur fehlgeschlagen. Boolean-Operation wird übersprungen.")
+                                         base_mesh_to_use = None
+                            except Exception as e:
+                                st.error(f"Fehler beim erneuten Laden des Base-Mesh: {e}")
+                                base_mesh_to_use = None
+
+                        # Führe die Boolean-Operation nur durch, wenn ein valides Mesh vorhanden ist
+                        if base_mesh_to_use is not None:
+                            st.info("Führe Boolean-Operation durch...")
+                            final_mesh = mesh.perform_boolean_subtraction(
+                                container_mesh=container_mesh,
+                                base_mesh=base_mesh_to_use,
+                                offset_x_mm=st.session_state.params["offset_x_mm"],
+                                offset_y_mm=st.session_state.params["offset_y_mm"],
+                                tolerance_mm=st.session_state.params["base_tolerance_mm"]
+                            )
+                            generated_mesh = final_mesh
+                        else:
+                            st.info("Kein valides Basis-Mesh vorhanden. Überspringe Boolean-Operation.")
                     else:
                         st.info("Kein Basis-Mesh hochgeladen. Überspringe Boolean-Operation.")
 
