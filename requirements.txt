@@ -6,7 +6,7 @@ rembg
 onnxruntime
 trimesh
 scikit-image
-git+https://github.com/SunOner/streamlit-drawable-canvas.git
+git+https://github.com/starrabb1t/streamlit-drawable-canvas.git
 scipy
 stpyvista
 pyvista<0.45.0
