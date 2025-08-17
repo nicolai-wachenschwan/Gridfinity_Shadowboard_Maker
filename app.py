@@ -214,9 +214,24 @@ class AppUI:
             slider_angle = st.slider("Bild drehen (°)", -180.0, 180.0, current_angle, 0.5)
             precise_angle = st.number_input("Genauer Winkel (°)", value=current_angle, step=0.1, format="%.2f")
         with col_stroke:
-            stroke_width_mm = st.number_input("Strichstärke (mm)", min_value=0.1, max_value=50.0, value=5.0, step=0.1)
+            # Zustand der Strichstärke im Session-State speichern
+            st.session_state.params["stroke_width_mm"] = st.number_input(
+                "Strichstärke (mm)",
+                min_value=0.1,
+                max_value=50.0,
+                value=st.session_state.params.get("stroke_width_mm", 5.0),
+                step=0.1
+            )
+            stroke_width_mm = st.session_state.params["stroke_width_mm"]
         with col_color:
-            g = st.slider("Grauwert (0=schwarz)", min_value=0, max_value=255, value=st.session_state.params.get("circle_grayscale_value", 0))
+            # Zustand des Grauwerts im Session-State speichern
+            st.session_state.params["circle_grayscale_value"] = st.slider(
+                "Grauwert (0=schwarz)",
+                min_value=0,
+                max_value=255,
+                value=st.session_state.params.get("circle_grayscale_value", 0)
+            )
+            g = st.session_state.params["circle_grayscale_value"]
             stroke_color = f"rgb({g}, {g}, {g})"
 
 
@@ -225,7 +240,12 @@ class AppUI:
         if new_angle != current_angle:
             self.state_manager.replace_current_state({"rotation_angle": float(new_angle)}); st.rerun()
 
-        show_grid = st.checkbox("Gitter einblenden (5×5)", value=False)
+        # Grid-Checkbox-Zustand im Session-State speichern, um ihn über Reruns hinweg zu erhalten
+        st.session_state.params['show_grid'] = st.checkbox(
+            "Gitter einblenden (5x5)",
+            value=st.session_state.params.get('show_grid', False)
+        )
+        show_grid = st.session_state.params['show_grid']
         st.divider()
 
         canvas_bg_np = numpy_from_bytes_or_pil(state["canvas_background"])
