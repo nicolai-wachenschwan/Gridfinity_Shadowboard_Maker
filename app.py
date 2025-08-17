@@ -363,7 +363,6 @@ class AppUI:
                 stl_data = f.read()
             st.download_button(label="📥 STL-Datei herunterladen", data=stl_data, file_name=st.session_state.params["output_filename"], mime="model/stl", use_container_width=True)
 
-if __name__ == "__main__":
-    app_state_manager = AppState()
-    app_ui = AppUI(app_state_manager)
-    app_ui.run()
+app_state_manager = AppState()
+app_ui = AppUI(app_state_manager)
+app_ui.run()
