@@ -133,8 +133,12 @@ class AppUI:
             with col1: st.button("↩️ Undo", on_click=self.state_manager.undo, use_container_width=True, disabled=st.session_state.current_step == 0)
             with col2: st.button("↪️ Redo", on_click=self.state_manager.redo, use_container_width=True, disabled=st.session_state.current_step >= len(st.session_state.history) - 1)
             st.button("🔄 Globaler Reset", on_click=self.state_manager.reset_all, type="primary", use_container_width=True)
-            st.divider()
-            st.header("📄 Parameter")
+
+    def render_upload_stage(self):
+        st.header("Schritt 1: Bild hochladen & Maske erstellen")
+        st.info("Laden Sie eine Bilddatei hoch, um eine Maske zu erstellen.")
+
+        with st.expander("📄 Parameter", expanded=True):
             if st.button("Defaults wiederherstellen", use_container_width=True): st.session_state.params = copy.deepcopy(DEFAULT_PARAMS)
             st.session_state.params["dpi"] = st.number_input("DPI Skalierung", value=st.session_state.params.get("dpi", 100), min_value=50, max_value=1200, step=10)
             st.session_state.params["thickening_mm"] = st.number_input("Aufdickung der Kontur (mm)", value=st.session_state.params.get("thickening_mm", 5), min_value=0, max_value=100, step=1)
@@ -143,14 +147,9 @@ class AppUI:
             if st.session_state.params["paper_format_name"] == "Benutzerdefiniert":
                 st.session_state.params["custom_paper_width_mm"] = st.number_input("Breite (mm)", value=st.session_state.params.get("custom_paper_width_mm", 210))
                 st.session_state.params["custom_paper_height_mm"] = st.number_input("Höhe (mm)", value=st.session_state.params.get("custom_paper_height_mm", 297))
-            st.divider()
 
-    def render_upload_stage(self):
-        st.header("Schritt 1: Bild hochladen & Maske erstellen")
-        st.info("Sie können entweder eine Bilddatei hochladen oder direkt ein Foto aufnehmen.")
-        camera_input = st.camera_input("📷 Foto aufnehmen", key="camera_input")
         uploaded_file = st.file_uploader("📂 Datei hochladen", type=['jpg', 'jpeg', 'png'], key="uploaded_file")
-        input_file = camera_input if camera_input is not None else uploaded_file
+        input_file = uploaded_file
         state = self.state_manager.get_current_state()
         col1, col2 = st.columns(2)
 
