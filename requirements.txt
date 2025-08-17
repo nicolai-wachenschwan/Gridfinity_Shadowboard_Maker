@@ -6,7 +6,7 @@ rembg
 onnxruntime
 trimesh
 scikit-image
-streamlit-drawable-canvas-fix
+streamlit-drawable-canvas==0.8.0
 scipy
 stpyvista
 pyvista<0.45.0
