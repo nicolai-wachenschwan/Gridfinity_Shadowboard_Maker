@@ -12,3 +12,4 @@ stpyvista
 pyvista<0.45.0
 vtk
 manifold3d
+requests
