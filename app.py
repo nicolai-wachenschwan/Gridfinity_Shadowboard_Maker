@@ -120,7 +120,7 @@ class AppState:
 class AppUI:
     def __init__(self, state_manager: AppState):
         self.state_manager = state_manager
-        st.title("🖼️ Custom Shadowboard Generator — with Boolean-Operation")
+        st.title("🖼️ Custom Shadowboard Generator — to Gridfinity and beyond")
 
     def run(self):
         self.render_sidebar()
@@ -139,6 +139,7 @@ class AppUI:
             st.button("🔄 Global Reset", on_click=self.state_manager.reset_all, type="primary", use_container_width=True)
 
     def render_upload_stage(self):
+        st.write("Your drawer needs a makeover? Then you might need custom inserts for your tools, but this is a lot of work.\n This app is made to speed up the process. Make a picture of your tools on a paper (on non white background), upload and get your stl.\n It is system agnostic, just upload your baseplate and it will create the matching cutout (tolerances included)\n")
         st.header("Step 1: Upload Image & Create Mask")
         st.info("Currently does not work well on smartphones.")
 
@@ -293,14 +294,14 @@ class AppUI:
         col_angle, col_stroke, col_color = st.columns(3)
         with col_angle:
             slider_angle = st.slider("Rotate Image (°)", -180.0, 180.0, current_angle, 0.5)
-            precise_angle = st.number_input("Precise Angle (°)", value=current_angle, step=0.1, format="%.2f")
+            precise_angle = st.number_input("Precise Angle (°)", value=current_angle, step=0.2, format="%.2f")
         with col_stroke:
             # Store stroke width in session state
             st.session_state.params["stroke_width_mm"] = st.number_input(
                 "Stroke Width (mm)",
                 min_value=0.1,
                 max_value=50.0,
-                value=st.session_state.params.get("stroke_width_mm", 5.0),
+                value=st.session_state.params.get("stroke_width_mm", 10.0),
                 step=0.1
             )
             stroke_width_mm = st.session_state.params["stroke_width_mm"]
@@ -465,7 +466,7 @@ class AppUI:
                     floor_thickness_mm = rem_thickness_mm
 
                     # Step 2: Always create the base container from the image
-                    container_mesh = mesh.erstelle_finalen_einsatz(
+                    container_mesh = mesh.create_final_insert(
                         tiefenbild=state["final_image_with_circles"],
                         dpi=st.session_state.params["dpi"],
                         max_tiefe_mm=max_depth_mm,
