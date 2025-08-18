@@ -5,6 +5,7 @@ start_xvfb()
 import io
 import copy
 import traceback
+import math
 import numpy as np
 import cv2
 from PIL import Image, ImageDraw
@@ -30,8 +31,9 @@ PAPER_SIZES_MM = {"A4 (210x297)": (210, 297), "A5 (148x210)": (148, 210), "A6 (1
 
 DEFAULT_PARAMS = {
     "dpi": 100, "paper_format_name": "A4 (210x297)", "custom_paper_width_mm": 210, "custom_paper_height_mm": 297,
-    "thickening_mm": 1, "circle_diameter_mm": 10, "circle_grayscale_value": 0, "max_depth_mm": 15.0,
-    "floor_thickness_mm": 2.0, "grid_size_mm": 25.4, "base_tolerance_mm": 0.3, "offset_x_mm": 0.0, "offset_y_mm": 0.0,
+    "thickening_mm": 1, "circle_diameter_mm": 10, "circle_grayscale_value": 0,
+    "height_mm": 17.0, "remaining_thickness_mm": 2.0, # Ersetzt max_depth_mm und floor_thickness_mm
+    "grid_size_mm": 42.0, "base_tolerance_mm": 0.3, "offset_x_mm": 0.0, "offset_y_mm": 0.0,
     "output_filename": "shadowboard.stl",
     # new params
     "use_depth_map": False, "depth_threshold": 127
@@ -139,13 +141,9 @@ class AppUI:
 
     def render_upload_stage(self):
         st.header("Schritt 1: Bild hochladen & Maske erstellen")
-        st.info("Laden Sie eine Bilddatei hoch, um eine Maske zu erstellen.")
+        st.info("Funktioniert aktuell nicht so gut auf Smartphones.")
 
         with st.expander("📄 Parameter", expanded=True):
-            if st.button("Defaults wiederherstellen", use_container_width=True):
-                st.session_state.params = copy.deepcopy(DEFAULT_PARAMS)
-
-            st.subheader("Erstellungsmethode")
             st.session_state.params["use_depth_map"] = st.checkbox(
                 "Tiefen-Map aus neuronalem Netz verwenden (Beta)",
                 value=st.session_state.params.get("use_depth_map", False),
@@ -160,11 +158,9 @@ class AppUI:
                 )
 
             st.divider()
-            st.subheader("Allgemeine Parameter")
             st.session_state.params["dpi"] = st.number_input("DPI Skalierung", value=st.session_state.params.get("dpi", 100), min_value=50, max_value=1200, step=10)
             st.session_state.params["thickening_mm"] = st.number_input("Aufdickung der Kontur (mm)", value=st.session_state.params.get("thickening_mm", 5), min_value=0, max_value=100, step=1)
 
-            st.subheader("Papiergröße")
             st.session_state.params["paper_format_name"] = st.selectbox("Format wählen", options=list(PAPER_SIZES_MM.keys()), index=list(PAPER_SIZES_MM.keys()).index(st.session_state.params.get("paper_format_name", "A4 (210x297)")))
             if st.session_state.params["paper_format_name"] == "Benutzerdefiniert":
                 st.session_state.params["custom_paper_width_mm"] = st.number_input("Breite (mm)", value=st.session_state.params.get("custom_paper_width_mm", 210))
@@ -415,28 +411,63 @@ class AppUI:
                 if st.session_state.base_mesh_is_watertight:
                     st.success(f"✅ Mesh '{base_mesh_file.name}' ist wasserdicht (watertight) und bereit zur Verwendung.")
                 else:
-                    st.warning(f"⚠️ Mesh '{base_mesh_file.name}' ist nicht wasserdicht. Dies kann zu Problemen führen. Bei der Generierung wird eine automatische Reparatur versucht.")
+                    st.warning(f"⚠️ Mesh '{base_mesh_file.name}' ist nicht wasserdicht. Dies kann zu Problemen führen. Bei der Generierung wird eine automatische Reparatur versucht. Tipp: Externe Programme wie PrusaSlicer können solche Fehler oft zuverlässig reparieren.")
 
         st.subheader("3D Parameter")
         col1, col2 = st.columns(2)
-        with col1: st.session_state.params["max_depth_mm"] = st.number_input("Max. Tiefe der Vertiefung (mm)", min_value=1.0, value=st.session_state.params.get("max_depth_mm", 15.0))
-        with col2: st.session_state.params["floor_thickness_mm"] = st.number_input("Bodenstärke (mm)", min_value=1.0, value=st.session_state.params.get("floor_thickness_mm", 2.0))
+        with col1:
+            st.session_state.params["height_mm"] = st.number_input(
+                "Gesamthöhe (mm)",
+                min_value=2.0,
+                value=st.session_state.params.get("height_mm", 17.0),
+                help="Die komplette Höhe des fertigen Einsatzes."
+            )
+        with col2:
+            st.session_state.params["remaining_thickness_mm"] = st.number_input(
+                "Bodenstärke (Reststärke) (mm)",
+                min_value=1.0,
+                value=st.session_state.params.get("remaining_thickness_mm", 2.0),
+                help="Die Materialstärke, die an der dünnsten Stelle des Bodens übrig bleibt."
+            )
 
-        st.subheader("Parameter für Boolean-Operation")
-        col3, col4 = st.columns(2)
-        with col3: st.session_state.params["offset_x_mm"] = st.number_input("Offset X (mm)", value=st.session_state.params.get("offset_x_mm", 0.0), format="%.2f")
-        with col4: st.session_state.params["offset_y_mm"] = st.number_input("Offset Y (mm)", value=st.session_state.params.get("offset_y_mm", 0.0), format="%.2f")
-        st.session_state.params["base_tolerance_mm"] = st.number_input("Toleranz zu Basis (mm)", min_value=0.0, value=st.session_state.params.get("base_tolerance_mm", 0.3), format="%.2f")
+        st.session_state.params["grid_size_mm"] = st.number_input(
+            "Grid-Größe (mm)",
+            min_value=10.0,
+            value=st.session_state.params.get("grid_size_mm", 42.0),
+            step=1.0,
+            help="Die Kantenlänge einer einzelnen Zelle des Rasters (z.B. 42mm für Gridfinity)."
+        )
+
+        with st.expander("Parameter für Boolean-Operation", expanded=base_mesh_file is not None):
+            col3, col4 = st.columns(2)
+            with col3: st.session_state.params["offset_x_mm"] = st.number_input("Offset X (mm)", value=st.session_state.params.get("offset_x_mm", 0.0), format="%.2f")
+            with col4: st.session_state.params["offset_y_mm"] = st.number_input("Offset Y (mm)", value=st.session_state.params.get("offset_y_mm", 0.0), format="%.2f")
+            st.session_state.params["base_tolerance_mm"] = st.number_input("Toleranz zu Basis (mm)", min_value=0.0, value=st.session_state.params.get("base_tolerance_mm", 0.3), format="%.2f")
 
         st.divider()
 
         if st.button("🚀 3D-Modell generieren / verrechnen!", type="primary", use_container_width=True):
             with st.spinner("Erzeuge 3D-Mesh... Dies kann einen Moment dauern."):
                 try:
-                    # Schritt 1: Immer den Basis-Container aus dem Bild erstellen
+                    # Schritt 1: Parameter validieren und berechnen
+                    height_mm = st.session_state.params.get("height_mm", 17.0)
+                    rem_thickness_mm = st.session_state.params.get("remaining_thickness_mm", 2.0)
+
+                    if height_mm <= rem_thickness_mm:
+                        st.error("Die Gesamthöhe muss größer als die Bodenstärke sein.")
+                        return
+
+                    max_tiefe_mm = height_mm - rem_thickness_mm
+                    bodenstaerke_mm = rem_thickness_mm
+
+                    # Schritt 2: Immer den Basis-Container aus dem Bild erstellen
                     container_mesh = mesh.erstelle_finalen_einsatz(
-                        tiefenbild=state["final_image_with_circles"], dpi=st.session_state.params["dpi"],
-                        max_tiefe_mm=st.session_state.params["max_depth_mm"], bodenstaerke_mm=st.session_state.params["floor_thickness_mm"])
+                        tiefenbild=state["final_image_with_circles"],
+                        dpi=st.session_state.params["dpi"],
+                        max_tiefe_mm=max_tiefe_mm,
+                        bodenstaerke_mm=bodenstaerke_mm,
+                        grid_basis_mm=st.session_state.params.get("grid_size_mm", 42.0)
+                    )
 
                     generated_mesh = container_mesh
 
@@ -496,7 +527,19 @@ class AppUI:
                         #trimesh.repair.fill_holes(generated_mesh)
                         #generated_mesh.remove_unreferenced_vertices()
 
-                    self.state_manager.update_state({"generated_mesh": generated_mesh})
+                    # Gittergröße für die Anzeige berechnen
+                    tiefenbild = state["final_image_with_circles"]
+                    dpi = st.session_state.params["dpi"]
+                    grid_basis_mm = st.session_state.params.get("grid_size_mm", 42.0)
+                    inch_zu_mm = 25.4
+                    original_hoehe_px, original_breite_px = tiefenbild.shape
+                    bild_breite_mm = (original_breite_px / dpi) * inch_zu_mm
+                    bild_hoehe_mm = (original_hoehe_px / dpi) * inch_zu_mm
+                    behaelter_wand_mm = 1.2
+                    n_x = math.ceil((bild_breite_mm + 2 * behaelter_wand_mm) / grid_basis_mm)
+                    n_y = math.ceil((bild_hoehe_mm + 2 * behaelter_wand_mm) / grid_basis_mm)
+
+                    self.state_manager.update_state({"generated_mesh": generated_mesh, "grid_cells": f"{n_x}x{n_y}"})
 
                 except Exception as e:
                     st.error(f"Fehler bei der Mesh-Erstellung: {e}")
@@ -505,6 +548,8 @@ class AppUI:
 
         state = self.state_manager.get_current_state()
         if state["generated_mesh"] is not None:
+            if state.get("grid_cells"):
+                st.info(f"Das generierte Teil passt in ein {state['grid_cells']} Raster.")
             st.subheader("Interaktive 3D-Vorschau")
             pv_mesh = pv.wrap(state["generated_mesh"])
             plotter = pv.Plotter(window_size=[800, 600], border=False)

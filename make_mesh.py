@@ -9,6 +9,7 @@ def erstelle_finalen_einsatz(
     dpi=100.0,
     max_tiefe_mm=10.0,
     bodenstaerke_mm=2.0,
+    grid_basis_mm=42.0
 ):
     """
     Erzeugt einen hochoptimierten, soliden 3D-Einsatz.
