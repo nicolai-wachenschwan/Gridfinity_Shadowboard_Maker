@@ -16,6 +16,7 @@ import pyvista as pv
 # Lokale Module (bestehende Projektmodule)
 import preprocess_image as pre
 import make_mesh as mesh
+import depth_estimation as de
 
 st.set_page_config(layout="wide", page_title="Shadowboard Generator")
 
@@ -31,7 +32,9 @@ DEFAULT_PARAMS = {
     "dpi": 100, "paper_format_name": "A4 (210x297)", "custom_paper_width_mm": 210, "custom_paper_height_mm": 297,
     "thickening_mm": 1, "circle_diameter_mm": 10, "circle_grayscale_value": 0, "max_depth_mm": 15.0,
     "floor_thickness_mm": 2.0, "grid_size_mm": 25.4, "base_tolerance_mm": 0.3, "offset_x_mm": 0.0, "offset_y_mm": 0.0,
-    "output_filename": "shadowboard.stl"
+    "output_filename": "shadowboard.stl",
+    # new params
+    "use_depth_map": False, "depth_threshold": 127
 }
 
 # ---------- Hilfsfunktionen ----------
@@ -139,9 +142,28 @@ class AppUI:
         st.info("Laden Sie eine Bilddatei hoch, um eine Maske zu erstellen.")
 
         with st.expander("📄 Parameter", expanded=True):
-            if st.button("Defaults wiederherstellen", use_container_width=True): st.session_state.params = copy.deepcopy(DEFAULT_PARAMS)
+            if st.button("Defaults wiederherstellen", use_container_width=True):
+                st.session_state.params = copy.deepcopy(DEFAULT_PARAMS)
+
+            st.subheader("Erstellungsmethode")
+            st.session_state.params["use_depth_map"] = st.checkbox(
+                "Tiefen-Map aus neuronalem Netz verwenden (Beta)",
+                value=st.session_state.params.get("use_depth_map", False),
+                help="Erzeugt statt einer binären Maske eine Graustufen-Tiefen-Map für realistischere Vertiefungen. Benötigt einen einmaligen Modelldownload (~55 MB)."
+            )
+
+            if st.session_state.params["use_depth_map"]:
+                st.session_state.params["depth_threshold"] = st.slider(
+                    "Tiefen-Filter (Threshold)", min_value=0, max_value=255,
+                    value=st.session_state.params.get("depth_threshold", 127),
+                    help="Schneidet Tiefenwerte oberhalb dieses Schwellenwerts ab. Ein kleinerer Wert resultiert in einer tieferen maximalen Aushöhlung (0=maximale Tiefe)."
+                )
+
+            st.divider()
+            st.subheader("Allgemeine Parameter")
             st.session_state.params["dpi"] = st.number_input("DPI Skalierung", value=st.session_state.params.get("dpi", 100), min_value=50, max_value=1200, step=10)
             st.session_state.params["thickening_mm"] = st.number_input("Aufdickung der Kontur (mm)", value=st.session_state.params.get("thickening_mm", 5), min_value=0, max_value=100, step=1)
+
             st.subheader("Papiergröße")
             st.session_state.params["paper_format_name"] = st.selectbox("Format wählen", options=list(PAPER_SIZES_MM.keys()), index=list(PAPER_SIZES_MM.keys()).index(st.session_state.params.get("paper_format_name", "A4 (210x297)")))
             if st.session_state.params["paper_format_name"] == "Benutzerdefiniert":
@@ -153,7 +175,8 @@ class AppUI:
         state = self.state_manager.get_current_state()
         col1, col2 = st.columns(2)
 
-        def params_changed(state): return state.get("last_processed_params") != st.session_state.params
+        def params_changed(state):
+            return state.get("last_processed_params") != st.session_state.params
 
         if input_file is not None:
             file_bytes = input_file.getvalue()
@@ -164,18 +187,76 @@ class AppUI:
                     img_bgr = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
                     if img_bgr is None:
                         st.error("Konnte Bild nicht dekodieren."); return
+
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
                     rectified_image, _ = pre.process_and_undistort_paper(img_rgb, dpi=st.session_state.params["dpi"])
-                    if rectified_image is not None:
+
+                    if rectified_image is None:
+                        st.error("Papiererkennung fehlgeschlagen. Bitte versuchen Sie ein anderes Bild."); return
+
+                    use_depth_map = st.session_state.params.get("use_depth_map", False)
+                    final_processed_image = None
+
+                    if use_depth_map:
+                        st.write("Erzeuge Tiefen-Map...")
+                        rectified_bgr = cv2.cvtColor(rectified_image, cv2.COLOR_RGB2BGR)
+                        depth_map = de.get_depth_map(rectified_bgr)
+                        if depth_map is not None:
+                            st.write("Filtere und schneide Tiefen-Map zu...")
+                            # 1. Create binary mask
+                            removed_bg = pre.remove(rectified_image)
+                            bin_mask = pre.create_binary_mask(removed_bg)
+
+                            # 2. Re-normalize depth values within the tool area to 0-255
+                            tool_pixels = depth_map[bin_mask == 0]
+                            if tool_pixels.size > 0:
+                                min_val, max_val = np.min(tool_pixels), np.max(tool_pixels)
+                                if max_val > min_val:
+                                    normalized_pixels = ((tool_pixels - min_val) / (max_val - min_val) * 255.0)
+                                    depth_map[bin_mask == 0] = normalized_pixels.astype(np.uint8)
+
+                            # 3. Set background to white
+                            depth_map[bin_mask == 255] = 255
+
+                            # 4. Get cropping bounding box from the DILATED mask
+                            offset_px = int(st.session_state.params["thickening_mm"] * (st.session_state.params["dpi"] / 25.4))
+                            dilated_mask = pre.dilate_contours(bin_mask, offset_px)
+                            _, bbox = pre.crop_to_content(dilated_mask)
+
+                            if bbox:
+                                x, y, w, h = bbox
+                                # 5. Crop depth map AND the original binary mask
+                                cropped_depth = depth_map[y:y+h, x:x+w]
+                                cropped_bin_mask = bin_mask[y:y+h, x:x+w]
+
+                                # 6. Apply threshold (clamping) ONLY on the tool pixels
+                                threshold = st.session_state.params.get("depth_threshold", 127)
+                                tool_area_in_crop = cropped_depth[cropped_bin_mask == 0]
+                                clipped_tool_area = np.clip(tool_area_in_crop, a_min=0, a_max=threshold)
+                                cropped_depth[cropped_bin_mask == 0] = clipped_tool_area
+
+                                # 7. Add padding
+                                final_processed_image = pre.add_white_border_pad(cropped_depth, 20)
+                            else:
+                                st.error("Konnte keinen Inhalt in der Maske für das Zuschneiden finden.")
+                    else:
+                        # Fallback: Originale binäre Masken-Logik
                         removed_bg = pre.remove(rectified_image)
                         bin_mask = pre.create_binary_mask(removed_bg)
                         offset_px = int(st.session_state.params["thickening_mm"] * (st.session_state.params["dpi"] / 25.4))
                         dilated_mask = pre.dilate_contours(bin_mask, offset_px)
-                        cropped_mask = pre.crop_to_content(dilated_mask)
-                        padded_mask = pre.add_white_border_pad(cropped_mask, 20)
-                        self.state_manager.update_state({"uploaded_image": file_bytes, "processed_mask": padded_mask, "last_processed_params": copy.deepcopy(st.session_state.params)})
-                    else:
-                        st.error("Papiererkennung fehlgeschlagen. Bitte versuchen Sie ein anderes Bild."); return
+                        cropped_mask, _ = pre.crop_to_content(dilated_mask) # Bbox wird hier nicht benötigt
+                        if cropped_mask is not None:
+                            final_processed_image = pre.add_white_border_pad(cropped_mask, 20)
+                        else:
+                            st.error("Konnte keinen Inhalt in der Maske für das Zuschneiden finden.")
+
+                    if final_processed_image is not None:
+                        self.state_manager.update_state({
+                            "uploaded_image": file_bytes,
+                            "processed_mask": final_processed_image,
+                            "last_processed_params": copy.deepcopy(st.session_state.params)
+                        })
 
         state = self.state_manager.get_current_state()
         if state["uploaded_image"]:
@@ -185,7 +266,7 @@ class AppUI:
                 pil_preview = resize_image_keep_aspect(pil_orig)
                 st.image(pil_preview, use_container_width=False, width=pil_preview.size[0])
             with col2:
-                st.subheader("Erkannte Maske (Preview)")
+                st.subheader("Erkannte Maske / Tiefen-Map (Preview)")
                 if state["processed_mask"] is not None:
                     mask_pil = pil_from_bytes_or_array(state["processed_mask"])
                     mask_preview = resize_image_keep_aspect(mask_pil)

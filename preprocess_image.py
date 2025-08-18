@@ -89,15 +89,20 @@ def create_binary_mask(inputImage: np.ndarray) -> np.ndarray:
     return binaryImage
 
 
-def crop_to_content(binary_mask: np.ndarray) -> np.ndarray:
-    """Schneidet das Bild auf den Bereich mit Inhalt zu."""
-    #invert binary mask
+def crop_to_content(binary_mask: np.ndarray) -> tuple[np.ndarray | None, tuple | None]:
+    """
+    Schneidet das Bild auf den Bereich mit Inhalt zu und gibt die Bounding Box zurück.
+    """
+    # Invert binary mask to find non-white pixels
     inv_binary_mask = cv2.bitwise_not(binary_mask)
     coords = cv2.findNonZero(inv_binary_mask)
     if coords is None:
-        return None
+        # No content found, return None for both image and bounding box
+        return None, None
     x, y, w, h = cv2.boundingRect(coords)
-    return binary_mask[y:y+h, x:x+w]
+    cropped_image = binary_mask[y:y+h, x:x+w]
+    bbox = (x, y, w, h)
+    return cropped_image, bbox
 
 import cv2
 import numpy as np
@@ -172,17 +177,16 @@ if __name__ == "__main__":
         dilated_image = dilate_contours(bin_mask, 5)
         print("✅ Konturen erweitert")
         cv2.imwrite("dilated_contours.jpg", dilated_image)
-        cropped_image = crop_to_content(dilated_image)
-        padded_image = add_white_border_pad(cropped_image, 10)
-        if padded_image is not None:
+        cropped_image, _ = crop_to_content(dilated_image) # Update call to unpack tuple
+        if cropped_image is not None:
+            padded_image = add_white_border_pad(cropped_image, 10)
             print("✅ Weißer Rand hinzugefügt")
             cv2.imwrite("padded_image.jpg", padded_image)
-        if cropped_image is not None:
-                print("✅ Bild zugeschnitten")
-                cv2.imwrite(OUTPUT_CROPPED, cropped_image)
-                print("Konturen erweitert und gespeichert")
+            print("✅ Bild zugeschnitten")
+            cv2.imwrite(OUTPUT_CROPPED, cropped_image)
+            print("Konturen erweitert und gespeichert")
         else:
-                print("❌ Fehler beim Zuschneiden des Bildes")       
+            print("❌ Fehler beim Zuschneiden des Bildes")
         print("✅ Verarbeitung abgeschlossen")
         
         
