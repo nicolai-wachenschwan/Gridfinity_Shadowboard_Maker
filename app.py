@@ -199,29 +199,44 @@ class AppUI:
 
                     if use_depth_map:
                         st.write("Erzeuge Tiefen-Map...")
-                        # Wichtig: de.get_depth_map erwartet BGR
                         rectified_bgr = cv2.cvtColor(rectified_image, cv2.COLOR_RGB2BGR)
                         depth_map = de.get_depth_map(rectified_bgr)
                         if depth_map is not None:
                             st.write("Filtere und schneide Tiefen-Map zu...")
-                            # 1. Binäre Maske zur Filterung erstellen
+                            # 1. Create binary mask
                             removed_bg = pre.remove(rectified_image)
                             bin_mask = pre.create_binary_mask(removed_bg)
-                            # 2. Tiefen-Map mit binärer Maske filtern (Hintergrund entfernen)
+
+                            # 2. Re-normalize depth values within the tool area to 0-255
+                            tool_pixels = depth_map[bin_mask == 0]
+                            if tool_pixels.size > 0:
+                                min_val, max_val = np.min(tool_pixels), np.max(tool_pixels)
+                                if max_val > min_val:
+                                    normalized_pixels = ((tool_pixels - min_val) / (max_val - min_val) * 255.0)
+                                    depth_map[bin_mask == 0] = normalized_pixels.astype(np.uint8)
+
+                            # 3. Set background to white
                             depth_map[bin_mask == 255] = 255
-                            # 3. Zuschneide-Box von der *erweiterten* binären Maske erhalten
+
+                            # 4. Get cropping bounding box from the DILATED mask
                             offset_px = int(st.session_state.params["thickening_mm"] * (st.session_state.params["dpi"] / 25.4))
                             dilated_mask = pre.dilate_contours(bin_mask, offset_px)
                             _, bbox = pre.crop_to_content(dilated_mask)
+
                             if bbox:
                                 x, y, w, h = bbox
-                                # 4. Tiefen-Map mit derselben Box zuschneiden
+                                # 5. Crop depth map AND the original binary mask
                                 cropped_depth = depth_map[y:y+h, x:x+w]
-                                # 5. Tiefen-Map filtern (clamping)
+                                cropped_bin_mask = bin_mask[y:y+h, x:x+w]
+
+                                # 6. Apply threshold (clamping) ONLY on the tool pixels
                                 threshold = st.session_state.params.get("depth_threshold", 127)
-                                cropped_depth = np.clip(cropped_depth, a_min=0, a_max=threshold)
-                                # 6. Rand hinzufügen
-                                final_processed_image = pre.add_white_border_pad(cropped_depth, 20)
+                                tool_area_in_crop = cropped_depth[cropped_bin_mask == 0]
+                                clipped_tool_area = np.clip(tool_area_in_crop, a_min=0, a_max=threshold)
+                                cropped_depth[cropped_bin_mask == 0] = clipped_tool_area
+
+                                # 7. Add padding
+                                final_processed_image = pre.add_white_border_pad(cropped_depth, 5)
                             else:
                                 st.error("Konnte keinen Inhalt in der Maske für das Zuschneiden finden.")
                     else:
