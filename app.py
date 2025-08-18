@@ -467,11 +467,11 @@ class AppUI:
 
                     # Step 2: Always create the base container from the image
                     container_mesh = mesh.create_final_insert(
-                        tiefenbild=state["final_image_with_circles"],
+                        depth_image=state["final_image_with_circles"],
                         dpi=st.session_state.params["dpi"],
-                        max_tiefe_mm=max_depth_mm,
-                        bodenstaerke_mm=floor_thickness_mm,
-                        grid_basis_mm=st.session_state.params.get("grid_size_mm", 42.0)
+                        max_depth_mm=max_depth_mm,
+                        floor_thickness_mm=floor_thickness_mm,
+                        grid_base_mm=st.session_state.params.get("grid_size_mm", 42.0)
                     )
 
                     generated_mesh = container_mesh
