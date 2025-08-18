@@ -6,44 +6,70 @@ import onnxruntime as ort
 import streamlit as st
 
 # --- Constants ---
-MODEL_URL = "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx?download=true"
-MODEL_PATH = "depth_anything_v2_small.onnx"
+MODELS = {
+    "Small V2": {
+        "url": "https://huggingface.co/onnx-community/depth-anything-v2-small/resolve/main/onnx/model.onnx?download=true",
+        "path": "depth_anything_v2_small.onnx",
+        "size_mb": 55
+    },
+    "Base V2": {
+        "url": "https://huggingface.co/onnx-community/depth-anything-v2-base/resolve/main/onnx/model.onnx?download=true",
+        "path": "depth_anything_v2_base.onnx",
+        "size_mb": 371 # Approximate size
+    }
+}
 INPUT_HEIGHT = 518
 INPUT_WIDTH = 518
 
 # --- Model Downloading ---
-def download_model_if_needed():
-    """Downloads the ONNX model from Hugging Face if it's not already present."""
-    if not os.path.exists(MODEL_PATH):
+def download_model_if_needed(model_name: str):
+    """Downloads the selected ONNX model from Hugging Face if it's not already present."""
+    if model_name not in MODELS:
+        st.error(f"Unknown model: {model_name}")
+        return False
+
+    model_info = MODELS[model_name]
+    model_path = model_info["path"]
+    model_url = model_info["url"]
+    model_size_mb = model_info["size_mb"]
+
+    if not os.path.exists(model_path):
         try:
-            st.info(f"Downloading depth estimation model (~55 MB)... This may take a moment.")
-            with requests.get(MODEL_URL, stream=True) as r:
+            st.info(f"Downloading '{model_name}' model (~{model_size_mb} MB)... This may take a moment.")
+            with requests.get(model_url, stream=True) as r:
                 r.raise_for_status()
-                with open(MODEL_PATH, 'wb') as f:
+                with open(model_path, 'wb') as f:
                     for chunk in r.iter_content(chunk_size=8192):
                         f.write(chunk)
-            st.success("Model downloaded successfully.")
+            st.success(f"'{model_name}' model downloaded successfully.")
         except Exception as e:
-            st.error(f"Failed to download the depth model: {e}")
-            if os.path.exists(MODEL_PATH):
-                os.remove(MODEL_PATH) # Clean up partial downloads
+            st.error(f"Failed to download the model '{model_name}': {e}")
+            if os.path.exists(model_path):
+                os.remove(model_path) # Clean up partial downloads
             return False
     return True
 
 # --- Inference ---
 @st.cache_data(show_spinner=False)
-def get_depth_map(image_bgr: np.ndarray) -> np.ndarray | None:
+def get_depth_map(image_bgr: np.ndarray, model_name: str) -> np.ndarray | None:
     """
-    Performs depth estimation on a single image using the Depth Anything V2 ONNX model.
+    Performs depth estimation on a single image using the specified Depth Anything V2 ONNX model.
 
     Args:
         image_bgr: The input image in BGR format (as loaded by OpenCV).
+        model_name: The name of the model to use (e.g., "Small V2", "Base V2").
 
     Returns:
         A grayscale depth map (H, W) normalized to 0-255, or None if an error occurs.
     """
-    if not download_model_if_needed():
+    if model_name not in MODELS:
+        st.error(f"Unknown model for depth estimation: {model_name}")
         return None
+
+    if not download_model_if_needed(model_name):
+        return None
+
+    model_path = MODELS[model_name]["path"]
 
     try:
         # --- 1. Preprocessing ---
@@ -65,13 +91,16 @@ def get_depth_map(image_bgr: np.ndarray) -> np.ndarray | None:
 
         # --- 2. ONNX Inference ---
         sess_options = ort.SessionOptions()
-        session = ort.InferenceSession(MODEL_PATH, sess_options=sess_options, providers=["CPUExecutionProvider"])
+        # Use st.cache_resource to avoid reloading the model on every run
+        @st.cache_resource
+        def get_ort_session(path):
+            return ort.InferenceSession(path, sess_options=sess_options, providers=["CPUExecutionProvider"])
 
-        # Note: Using IOBinding is more efficient but requires more setup.
-        # For simplicity, we use the direct run method here.
+        session = get_ort_session(model_path)
+
         ort_inputs = {session.get_inputs()[0].name: image_tensor}
         ort_outs = session.run(None, ort_inputs)
-        depth_prediction = ort_outs[0][0] # Get the first (and only) output, remove batch dim
+        depth_prediction = ort_outs[0][0]
 
         # --- 3. Postprocessing ---
         # Normalize the output depth map to be in the range [0, 1]
