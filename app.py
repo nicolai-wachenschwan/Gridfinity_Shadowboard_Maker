@@ -236,7 +236,7 @@ class AppUI:
                                 cropped_depth[cropped_bin_mask == 0] = clipped_tool_area
 
                                 # 7. Add padding
-                                final_processed_image = pre.add_white_border_pad(cropped_depth, 20)
+                                final_processed_image = pre.add_white_border_pad(cropped_depth, 5)
                             else:
                                 st.error("Konnte keinen Inhalt in der Maske für das Zuschneiden finden.")
                     else:
