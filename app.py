@@ -144,13 +144,16 @@ class AppUI:
         st.info("Funktioniert aktuell nicht so gut auf Smartphones.")
 
         with st.expander("📄 Parameter", expanded=True):
-            st.session_state.params["use_depth_map"] = st.checkbox(
-                "Tiefen-Map aus neuronalem Netz verwenden (Beta)",
-                value=st.session_state.params.get("use_depth_map", False),
-                help="Erzeugt statt einer binären Maske eine Graustufen-Tiefen-Map für realistischere Vertiefungen. Benötigt einen einmaligen Modelldownload (~55 MB)."
+            # Replace checkbox with a radio button for depth model selection
+            st.session_state.params["depth_model"] = st.radio(
+                "Tiefen-Erkennung (Beta)",
+                options=["None", "Small V2", "Base V2"],
+                index=0 if not st.session_state.params.get("depth_model") or st.session_state.params.get("depth_model") == "None" else ["None", "Small V2", "Base V2"].index(st.session_state.params.get("depth_model")),
+                help="Wähle ein neuronales Netz zur Erzeugung einer Tiefen-Map. 'None' verwendet eine einfache binäre Maske. Die Modelle benötigen einen einmaligen Download."
             )
 
-            if st.session_state.params["use_depth_map"]:
+            # Show the depth threshold slider only if a depth model is selected
+            if st.session_state.params.get("depth_model") != "None":
                 st.session_state.params["depth_threshold"] = st.slider(
                     "Tiefen-Filter (Threshold)", min_value=0, max_value=255,
                     value=st.session_state.params.get("depth_threshold", 127),
@@ -190,13 +193,15 @@ class AppUI:
                     if rectified_image is None:
                         st.error("Papiererkennung fehlgeschlagen. Bitte versuchen Sie ein anderes Bild."); return
 
-                    use_depth_map = st.session_state.params.get("use_depth_map", False)
+                    # Updated logic to use the selected depth model
+                    depth_model_selected = st.session_state.params.get("depth_model", "None")
                     final_processed_image = None
 
-                    if use_depth_map:
-                        st.write("Erzeuge Tiefen-Map...")
+                    if depth_model_selected != "None":
+                        st.write(f"Erzeuge Tiefen-Map mit '{depth_model_selected}'...")
                         rectified_bgr = cv2.cvtColor(rectified_image, cv2.COLOR_RGB2BGR)
-                        depth_map = de.get_depth_map(rectified_bgr)
+                        # Pass the selected model name to the get_depth_map function
+                        depth_map = de.get_depth_map(rectified_bgr, model_name=depth_model_selected)
                         if depth_map is not None:
                             st.write("Filtere und schneide Tiefen-Map zu...")
                             # 1. Create binary mask
