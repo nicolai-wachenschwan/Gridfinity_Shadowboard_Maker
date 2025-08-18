@@ -31,7 +31,7 @@ PAPER_SIZES_MM = {"A4 (210x297)": (210, 297), "A5 (148x210)": (148, 210), "A6 (1
 DEFAULT_PARAMS = {
     "dpi": 100, "paper_format_name": "A4 (210x297)", "custom_paper_width_mm": 210, "custom_paper_height_mm": 297,
     "thickening_mm": 1, "circle_diameter_mm": 10, "circle_grayscale_value": 0,
-    "height_mm": 17.0, "remaining_thickness_mm": 2.0, # Replaces max_depth_mm and floor_thickness_mm
+    "height_mm": 20.0, "remaining_thickness_mm": 8.0, # Replaces max_depth_mm and floor_thickness_mm
     "grid_size_mm": 42.0, "base_tolerance_mm": 0.3, "offset_x_mm": 0.0, "offset_y_mm": 0.0,
     "output_filename": "shadowboard.stl",
     # new params
