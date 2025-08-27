@@ -12,7 +12,7 @@ import streamlit as st
 import trimesh
 from stpyvista import stpyvista
 import pyvista as pv
-import streamlit_dimensions as sdim
+from streamlit_dimensions import st_dimensions
 
 # Local modules (existing project modules)
 import preprocess_image as pre
@@ -318,7 +318,7 @@ class AppUI:
         st.divider()
 
         # Get screen dimensions with a fallback
-        screen_size = sdim.get(key="screen_size")
+        screen_size = st_dimensions(key="screen_size")
         max_w_dynamic = screen_size['width'] * 0.9 if screen_size and 'width' in screen_size else 1100
         max_h_dynamic = screen_size['height'] * 0.7 if screen_size and 'height' in screen_size else 700
 
