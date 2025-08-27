@@ -12,6 +12,7 @@ import streamlit as st
 import trimesh
 from stpyvista import stpyvista
 import pyvista as pv
+import streamlit_dimensions as sdim
 
 # Local modules (existing project modules)
 import preprocess_image as pre
@@ -21,10 +22,6 @@ import depth_estimation as de
 st.set_page_config(layout="wide", page_title="Shadowboard Generator")
 
 from streamlit_drawable_canvas import st_canvas
-
-# ---------- Constants / Defaults ----------
-MAX_DISPLAY_WIDTH_PX = 1100
-MAX_DISPLAY_HEIGHT_PX = 700
 
 PAPER_SIZES_MM = {"A4 (210x297)": (210, 297), "A5 (148x210)": (148, 210), "A6 (105x148)": (105, 148), "Letter (216x279)": (216, 279), "Custom": None}
 
@@ -39,14 +36,6 @@ DEFAULT_PARAMS = {
 }
 
 # ---------- Helper Functions ----------
-def resize_image_keep_aspect(pil_img: Image.Image, max_w=MAX_DISPLAY_WIDTH_PX, max_h=MAX_DISPLAY_HEIGHT_PX):
-    w, h = pil_img.size
-    scale = min(1.0, min(max_w / w, max_h / h))
-    if scale < 1.0:
-        new_size = (int(w * scale), int(h * scale))
-        return pil_img.resize(new_size, Image.LANCZOS)
-    return pil_img.copy()
-
 def draw_grid_on_image(np_img: np.ndarray, rows=5, cols=5, line_alpha=120):
     if len(np_img.shape) == 2:
         np_img_rgb = cv2.cvtColor(np_img, cv2.COLOR_GRAY2RGB)
@@ -264,14 +253,12 @@ class AppUI:
             with col1:
                 st.subheader("Original Image (Preview)")
                 pil_orig = pil_from_bytes_or_array(state["uploaded_image"])
-                pil_preview = resize_image_keep_aspect(pil_orig)
-                st.image(pil_preview, use_container_width=False, width=pil_preview.size[0])
+                st.image(pil_orig, use_container_width=True)
             with col2:
                 st.subheader("Detected Mask / Depth Map (Preview)")
                 if state["processed_mask"] is not None:
                     mask_pil = pil_from_bytes_or_array(state["processed_mask"])
-                    mask_preview = resize_image_keep_aspect(mask_pil)
-                    st.image(mask_preview, use_container_width=False, width=mask_preview.size[0], clamp=True)
+                    st.image(mask_pil, use_container_width=True, clamp=True)
                     if st.button("✅ Confirm Mask & Continue to Alignment"):
                         canvas_bg_np = numpy_from_bytes_or_pil(state["processed_mask"])
                         self.state_manager.update_state({"stage": "align", "canvas_background": canvas_bg_np, "rotation_angle": 0.0}); st.rerun()
@@ -330,6 +317,11 @@ class AppUI:
         show_grid = st.session_state.params['show_grid']
         st.divider()
 
+        # Get screen dimensions with a fallback
+        screen_size = sdim.get(key="screen_size")
+        max_w_dynamic = screen_size['width'] * 0.9 if screen_size and 'width' in screen_size else 1100
+        max_h_dynamic = screen_size['height'] * 0.7 if screen_size and 'height' in screen_size else 700
+
         canvas_bg_np = numpy_from_bytes_or_pil(state["canvas_background"])
         h, w = canvas_bg_np.shape[:2]
         center = (w // 2, h // 2)
@@ -339,42 +331,53 @@ class AppUI:
         canvas_for_canvas = rotated_img.copy()
         if show_grid: canvas_for_canvas = draw_grid_on_image(rotated_img, rows=5, cols=5, line_alpha=120)
 
-        st.markdown(f"**Interactive Canvas (Resolution: {w} × {h}px)**")
+        # Calculate display scaling
+        scale = min(1.0, min(max_w_dynamic / w, max_h_dynamic / h)) if w > 0 and h > 0 else 1.0
+        display_w = int(w * scale)
+        display_h = int(h * scale)
 
-        # Convert stroke width from mm to px
+        st.markdown(f"**Interactive Canvas (Resolution: {w} × {h}px, Displayed as: {display_w} x {display_h}px)**")
+
+        # Convert stroke width from mm to px for the original image
         dpi = st.session_state.params.get("dpi", 100)
-        stroke_width_px = int(stroke_width_mm * (dpi / 25.4))
-        st.info(f"Stroke width: {stroke_width_mm} mm corresponds to {stroke_width_px} px at {dpi} DPI.")
+        stroke_width_px_original = int(stroke_width_mm * (dpi / 25.4))
+        # Scale stroke width for display on the scaled canvas
+        stroke_width_px_display = max(1, int(stroke_width_px_original * scale))
+        st.info(f"Stroke width: {stroke_width_mm} mm equals {stroke_width_px_original} px at {dpi} DPI. (Displayed as {stroke_width_px_display}px)")
 
+        # Resize background for display
         pil_bg_for_canvas = pil_from_bytes_or_array(canvas_for_canvas)
+        if scale < 1.0:
+            pil_bg_for_canvas = pil_bg_for_canvas.resize((display_w, display_h), Image.LANCZOS)
+
         canvas_result = st_canvas(
             drawing_mode="freedraw",
-            stroke_width=stroke_width_px,
+            stroke_width=stroke_width_px_display,
             stroke_color=stroke_color,
             background_image=pil_bg_for_canvas,
             update_streamlit=True,
-            height=h,
-            width=w,
+            height=display_h,
+            width=display_w,
             key="align_canvas_native"
         )
 
         if st.button("✅ Confirm Alignment & Continue to 3D Creation"):
             with st.spinner("Combining image and drawing..."):
                 background_gray = rotated_img.copy()
+                drawing_mask = np.full_like(background_gray, 255)
 
-                # Create an empty image for the drawing
-                drawing_mask = np.full_like(background_gray, 255) # Start with a white mask
+                if canvas_result.json_data is not None and canvas_result.json_data.get("objects"):
+                    h_orig, w_orig = background_gray.shape[:2]
+                    scale_inv = min(1.0, min(max_w_dynamic / w_orig, max_h_dynamic / h_orig)) if w_orig > 0 and h_orig > 0 else 1.0
 
-                if canvas_result.json_data is not None:
-                    objects = canvas_result.json_data.get("objects", [])
-                    for obj in objects:
-                        if obj['type'] == 'path':
-                            path = [np.array(p[1:3]).astype(np.int32) for p in obj['path']]
-                            cv2.polylines(drawing_mask, [np.array(path)], isClosed=False, color=(0,0,0), thickness=stroke_width_px)
+                    if scale_inv > 0:
+                        for obj in canvas_result.json_data["objects"]:
+                            if obj['type'] == 'path':
+                                path_points = [p[1:3] for p in obj['path']]
+                                scaled_points = [[p[0] / scale_inv, p[1] / scale_inv] for p in path_points]
+                                path_np = np.array(scaled_points, dtype=np.int32)
+                                cv2.polylines(drawing_mask, [path_np], isClosed=False, color=(0,0,0), thickness=stroke_width_px_original)
 
-                # Combine the drawing (black lines) with the background image (white/gray)
-                # Where the mask is black (0), the final image should be black.
-                # Where the mask is white (255), the final image should have the value of the background.
                 final_image = np.minimum(background_gray, drawing_mask)
 
 

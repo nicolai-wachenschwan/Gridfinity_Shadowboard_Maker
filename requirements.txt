@@ -1,4 +1,5 @@
 streamlit
+streamlit-dimensions
 opencv-python
 numpy
 Pillow
