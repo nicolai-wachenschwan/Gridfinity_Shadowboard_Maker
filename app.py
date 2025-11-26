@@ -18,6 +18,8 @@ from streamlit_dimensions import st_dimensions
 import preprocess_image as pre
 import make_mesh as mesh
 import depth_estimation as de
+import sam_processing as sam
+import sys
 
 st.set_page_config(layout="wide", page_title="Shadowboard Generator")
 
@@ -65,6 +67,18 @@ def numpy_from_bytes_or_pil(img_like):
     if isinstance(img_like, np.ndarray): return img_like.copy()
     pil = pil_from_bytes_or_array(img_like)
     return np.array(pil)
+
+def resize_image(image: np.ndarray, max_size: int) -> tuple[np.ndarray, float]:
+    """Resizes an image to a maximum size, preserving the aspect ratio."""
+    h, w = image.shape[:2]
+    if max(h, w) <= max_size:
+        return image, 1.0
+
+    scale = max_size / max(h, w)
+    new_w, new_h = int(w * scale), int(h * scale)
+
+    resized_image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+    return resized_image, scale
 
 # ---------- App state (with history) ----------
 class AppState:
@@ -133,6 +147,15 @@ class AppUI:
         st.info("Currently does not work well on smartphones.")
 
         with st.expander("📄 Parameters", expanded=True):
+            is_windows = sys.platform == "win32"
+            sam_options = ["SAM 2.1 (Windows Only)"] if is_windows else []
+            st.session_state.params["segmentation_method"] = st.radio(
+                "Segmentation Method",
+                options=["Standard (rembg)"] + sam_options,
+                index=0,
+                help="Select the algorithm to detect the tools. SAM 2.1 is more advanced but requires Windows."
+            )
+
             # Replace checkbox with a radio button for depth model selection
             st.session_state.params["depth_model"] = st.radio(
                 "Depth-Detection (Beta)",
@@ -177,27 +200,48 @@ class AppUI:
                         st.error("Could not decode image."); return
 
                     img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-                    rectified_image, _ = pre.process_and_undistort_paper(img_rgb, dpi=st.session_state.params["dpi"])
+                    rectified_image, paper_coords = pre.process_and_undistort_paper(img_rgb, dpi=st.session_state.params["dpi"])
 
                     if rectified_image is None:
                         st.error("Paper detection failed. Please try another image."); return
 
-                    # Updated logic to use the selected depth model
+                    # --- Image Scaling ---
+                    scaled_image, scale_factor = resize_image(rectified_image, 1000)
+                    h_orig, w_orig = rectified_image.shape[:2]
+
+                    # --- Segmentation ---
+                    segmentation_method = st.session_state.params.get("segmentation_method", "Standard (rembg)")
+                    bin_mask_scaled = None
+                    if segmentation_method == "SAM 2.1 (Windows Only)":
+                        st.write("Generating masks with SAM 2.1...")
+                        if paper_coords is not None:
+                            # Scale paper coordinates for the resized image
+                            paper_coords_scaled = (paper_coords * scale_factor).astype(np.int32)
+                            bin_mask_scaled = sam.generate_sam2_masks(scaled_image, paper_coords_scaled)
+                        else:
+                            st.error("Paper coordinates not found, cannot run SAM 2.1 processing.")
+                    else: # Standard (rembg)
+                        st.write("Removing background with rembg...")
+                        removed_bg = pre.remove(scaled_image)
+                        bin_mask_scaled = pre.create_binary_mask(removed_bg)
+
+                    if bin_mask_scaled is None:
+                        st.error("Segmentation failed."); return
+
+                    # --- Rescale Mask to Original Size ---
+                    bin_mask = cv2.resize(bin_mask_scaled, (w_orig, h_orig), interpolation=cv2.INTER_NEAREST)
+
+                    # --- Depth Map Generation (optional) ---
                     depth_model_selected = st.session_state.params.get("depth_model", "None")
                     final_processed_image = None
 
                     if depth_model_selected != "None":
                         st.write(f"Generating depth map with '{depth_model_selected}'...")
                         rectified_bgr = cv2.cvtColor(rectified_image, cv2.COLOR_RGB2BGR)
-                        # Pass the selected model name to the get_depth_map function
                         depth_map = de.get_depth_map(rectified_bgr, model_name=depth_model_selected)
-                        if depth_map is not None:
-                            st.write("Filtering and cropping depth map...")
-                            # 1. Create binary mask
-                            removed_bg = pre.remove(rectified_image)
-                            bin_mask = pre.create_binary_mask(removed_bg)
 
-                            # 2. Re-normalize depth values within the tool area to 0-255
+                        if depth_map is not None:
+                            # Normalize depth map based on the tool mask
                             tool_pixels = depth_map[bin_mask == 0]
                             if tool_pixels.size > 0:
                                 min_val, max_val = np.min(tool_pixels), np.max(tool_pixels)
@@ -205,37 +249,33 @@ class AppUI:
                                     normalized_pixels = ((tool_pixels - min_val) / (max_val - min_val) * 255.0)
                                     depth_map[bin_mask == 0] = normalized_pixels.astype(np.uint8)
 
-                            # 3. Set background to white
-                            depth_map[bin_mask == 255] = 255
+                            depth_map[bin_mask == 255] = 255 # Set background to white
 
-                            # 4. Get cropping bounding box from the DILATED mask
+                            # Dilate, crop, and process the depth map
                             offset_px = int(st.session_state.params["thickening_mm"] * (st.session_state.params["dpi"] / 25.4))
                             dilated_mask = pre.dilate_contours(bin_mask, offset_px)
                             _, bbox = pre.crop_to_content(dilated_mask)
 
                             if bbox:
                                 x, y, w, h = bbox
-                                # 5. Crop depth map AND the original binary mask
                                 cropped_depth = depth_map[y:y+h, x:x+w]
                                 cropped_bin_mask = bin_mask[y:y+h, x:x+w]
 
-                                # 6. Apply threshold (clamping) ONLY on the tool pixels
                                 threshold = st.session_state.params.get("depth_threshold", 127)
                                 tool_area_in_crop = cropped_depth[cropped_bin_mask == 0]
                                 clipped_tool_area = np.clip(tool_area_in_crop, a_min=0, a_max=threshold)
                                 cropped_depth[cropped_bin_mask == 0] = clipped_tool_area
 
-                                # 7. Add padding
                                 final_processed_image = pre.add_white_border_pad(cropped_depth, 5)
                             else:
                                 st.error("Could not find content in the mask for cropping.")
-                    else:
-                        # Fallback: Original binary mask logic
-                        removed_bg = pre.remove(rectified_image)
-                        bin_mask = pre.create_binary_mask(removed_bg)
+                        else:
+                            st.error("Depth map generation failed.")
+
+                    else: # No depth map, use the binary mask
                         offset_px = int(st.session_state.params["thickening_mm"] * (st.session_state.params["dpi"] / 25.4))
                         dilated_mask = pre.dilate_contours(bin_mask, offset_px)
-                        cropped_mask, _ = pre.crop_to_content(dilated_mask) # Bbox is not needed here
+                        cropped_mask, _ = pre.crop_to_content(dilated_mask)
                         if cropped_mask is not None:
                             final_processed_image = pre.add_white_border_pad(cropped_mask, 20)
                         else:
